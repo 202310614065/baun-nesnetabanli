@@ -45,6 +45,9 @@ df["encoded_label"] = label_encoder.fit_transform(df["Label"])
 X = df["cleaned_tweet"].values
 y = df["encoded_label"].values
 
+# Toplam sınıf sayısı
+num_classes = len(label_encoder.classes_)
+
 # ------------------------------------------------------------------
 # 3. EĞİTİM/TEST AYRIMI (Stratified Split)
 # ------------------------------------------------------------------
@@ -140,31 +143,27 @@ with pd.ExcelWriter("machine_learn_sonuc.xlsx") as writer:
 
 print("\nTüm metrikler ve değerlendirmeler 'machine_learn_sonuc.xlsx' dosyasına kaydedildi.")
 
-# --- 1. Grup Bar Grafiği: Test Verisi Model Metrikleri ---
-import matplotlib.pyplot as plt
-import numpy as np
+# ------------------------------------------------------------------
+# 7. GRAFİKSEL GÖSTERİMLER
+# ------------------------------------------------------------------
 
-# Örnek metrikler içeren dataframe (df_test_overall) kullanılacaktır.
-# df_test_overall sütunları: 'Model', 'Accuracy', 'CV_Mean_Accuracy', 'Macro_F1', 'Weighted_F1'
+# (a) Grup Bar Grafiği: Test Verisi Model Metrikleri
 models_list = df_test_overall['Model']
 x = np.arange(len(models_list))  # Model indexleri
-width = 0.2  # Her bar'ın genişliği
+bar_width = 0.2  # Her bar'ın genişliği
 
 fig, ax = plt.subplots(figsize=(10, 6))
+bars1 = ax.bar(x - 1.5*bar_width, df_test_overall['Accuracy'], bar_width, label='Accuracy')
+bars2 = ax.bar(x - 0.5*bar_width, df_test_overall['CV_Mean_Accuracy'], bar_width, label='CV Mean Accuracy')
+bars3 = ax.bar(x + 0.5*bar_width, df_test_overall['Macro_F1'], bar_width, label='Macro F1')
+bars4 = ax.bar(x + 1.5*bar_width, df_test_overall['Weighted_F1'], bar_width, label='Weighted F1')
 
-# Her metrik için çubuklar:
-bars1 = ax.bar(x - 1.5*width, df_test_overall['Accuracy'], width, label='Accuracy')
-bars2 = ax.bar(x - 0.5*width, df_test_overall['CV_Mean_Accuracy'], width, label='CV Mean Accuracy')
-bars3 = ax.bar(x + 0.5*width, df_test_overall['Macro_F1'], width, label='Macro F1')
-bars4 = ax.bar(x + 1.5*width, df_test_overall['Weighted_F1'], width, label='Weighted F1')
-
-# Çubukların üzerine değerleri ekleyelim:
 def autolabel(bars):
     for bar in bars:
         height = bar.get_height()
         ax.annotate(f'{height:.2f}',
                     xy=(bar.get_x() + bar.get_width() / 2, height),
-                    xytext=(0, 3),  # biraz yukarı kaydırma
+                    xytext=(0, 3),
                     textcoords="offset points",
                     ha='center', va='bottom')
 
@@ -182,12 +181,11 @@ ax.legend()
 plt.tight_layout()
 plt.show()
 
+# (b) Confusion Matrix Karşılaştırması (2x2 Grid)
+fig_cm, axes_cm = plt.subplots(2, 2, figsize=(12, 10))
+axes_cm = axes_cm.flatten()
 
-# --- 2. Confusion Matrix Karşılaştırması (2x2 Grid) ---
-fig_cm, axes = plt.subplots(2, 2, figsize=(12, 10))
-axes = axes.flatten()
-
-for ax, name in zip(axes, results_test.keys()):
+for ax, name in zip(axes_cm, results_test.keys()):
     cm = results_test[name]["confusion_matrix"]
     im = ax.imshow(cm, interpolation='nearest', cmap='viridis')
     ax.set_title(name)
@@ -198,8 +196,6 @@ for ax, name in zip(axes, results_test.keys()):
     ax.set_yticklabels(label_encoder.classes_)
     ax.set_xlabel('Tahmin')
     ax.set_ylabel('Gerçek')
-
-    # Hücrelere değerleri ekleme
     thresh = cm.max() / 2.
     for i in range(cm.shape[0]):
         for j in range(cm.shape[1]):
@@ -211,25 +207,21 @@ fig_cm.suptitle('Test Verisi: Model Confusion Matrix Karşılaştırması', font
 fig_cm.tight_layout(rect=[0, 0.03, 1, 0.95])
 plt.show()
 
-
-# --- 3. Gerçek Etiketler ile Model Tahminlerinin Karşılaştırılması ---
-# Gerçek etiket dağılımı:
+# (c) Gerçek Etiketler ile Model Tahminlerinin Karşılaştırılması
 actual_counts = np.bincount(y_test, minlength=len(label_encoder.classes_))
 classes = label_encoder.classes_
 x = np.arange(len(classes))
-width = 0.15
+bar_width = 0.15
 
 fig_compare, ax = plt.subplots(figsize=(10, 6))
-bars_actual = ax.bar(x - width, actual_counts, width, label="Gerçek Etiketler")
+bars_actual = ax.bar(x - bar_width, actual_counts, bar_width, label="Gerçek Etiketler")
 
-# Her modelin tahmin dağılımını ekleyelim:
 bars_models = []
 for idx, (name, res) in enumerate(results_test.items()):
     pred_counts = np.bincount(res["y_pred"], minlength=len(label_encoder.classes_))
-    bar = ax.bar(x + idx*width, pred_counts, width, label=f"{name} Tahmin")
+    bar = ax.bar(x + idx*bar_width, pred_counts, bar_width, label=f"{name} Tahmin")
     bars_models.append(bar)
 
-# Çubukların üzerine değerleri ekleme:
 def autolabel_bars(bars):
     for bar in bars:
         height = bar.get_height()
@@ -250,4 +242,105 @@ ax.set_xticklabels(classes)
 ax.legend()
 
 plt.tight_layout()
+plt.show()
+
+# ------------------------------------------------------------------
+# 8. EK: ROC ve Precision-Recall Grafikleri (Her model için)
+# ------------------------------------------------------------------
+from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
+from sklearn.preprocessing import label_binarize
+
+# y_test'i çok sınıflı hesaplamalar için binarize ediyoruz
+y_test_bin = label_binarize(y_test, classes=range(num_classes))
+# Binary durumunda, eğer y_test_bin tek sütunluyse, eksik sütunu ekleyelim:
+if num_classes == 2 and (y_test_bin.ndim == 1 or y_test_bin.shape[1] == 1):
+    y_test_bin = y_test_bin.reshape(-1, 1)
+    if y_test_bin.shape[1] == 1:
+        y_test_bin = np.concatenate([1 - y_test_bin, y_test_bin], axis=1)
+
+# ROC eğrilerini 2x2 grid şeklinde çizelim
+fig_roc, axes_roc = plt.subplots(2, 2, figsize=(16, 12))
+axes_roc = axes_roc.flatten()
+
+for i, (name, res) in enumerate(results_test.items()):
+    model = res["model"]
+    try:
+        y_score = model.predict_proba(X_test)
+    except Exception as e:
+        y_score = model.decision_function(X_test)
+    y_score = np.array(y_score)
+    # Eğer y_score 1D veya (n,1) ise, onu (n,2) yapalım:
+    if y_score.ndim == 1 or (y_score.ndim == 2 and y_score.shape[1] == 1):
+        y_score = y_score.reshape(-1, 1)
+        y_score = np.concatenate([1 - y_score, y_score], axis=1)
+    print(f"{name}: y_score shape after conversion: {y_score.shape}")
+    
+    fpr = dict()
+    tpr = dict()
+    roc_auc = dict()
+    for j in range(num_classes):
+        fpr[j], tpr[j], _ = roc_curve(y_test_bin[:, j], y_score[:, j])
+        roc_auc[j] = auc(fpr[j], tpr[j])
+    fpr["micro"], tpr["micro"], _ = roc_curve(y_test_bin.ravel(), y_score.ravel())
+    roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
+    
+    ax = axes_roc[i]
+    ax.plot(fpr["micro"], tpr["micro"],
+            label='Micro-average ROC (AUC = {0:0.2f})'.format(roc_auc["micro"]),
+            color='deeppink', linestyle=':', linewidth=4)
+    colors = ['aqua', 'darkorange', 'cornflowerblue', 'green', 'red', 'purple']
+    for j in range(num_classes):
+        ax.plot(fpr[j], tpr[j], color=colors[j % len(colors)], lw=2,
+                label='ROC (class {0}) (AUC = {1:0.2f})'.format(label_encoder.classes_[j], roc_auc[j]))
+    ax.plot([0, 1], [0, 1], 'k--', lw=2)
+    ax.set_xlim([0.0, 1.0])
+    ax.set_ylim([0.0, 1.05])
+    ax.set_xlabel('False Positive Rate', fontsize=12)
+    ax.set_ylabel('True Positive Rate', fontsize=12)
+    ax.set_title(f'ROC Curve - {name}', fontsize=14)
+    ax.legend(loc="lower right", fontsize=10, ncol=2)
+
+plt.tight_layout()
+plt.subplots_adjust(bottom=0.08, top=0.95, hspace=0.3)
+plt.show()
+
+# Precision-Recall eğrilerini 2x2 grid şeklinde çizelim
+fig_pr, axes_pr = plt.subplots(2, 2, figsize=(16, 12))
+axes_pr = axes_pr.flatten()
+
+for i, (name, res) in enumerate(results_test.items()):
+    model = res["model"]
+    try:
+        y_score = model.predict_proba(X_test)
+    except Exception as e:
+        y_score = model.decision_function(X_test)
+    y_score = np.array(y_score)
+    if y_score.ndim == 1 or (y_score.ndim == 2 and y_score.shape[1] == 1):
+        y_score = y_score.reshape(-1, 1)
+        y_score = np.concatenate([1 - y_score, y_score], axis=1)
+    
+    precision = dict()
+    recall = dict()
+    average_precision = dict()
+    for j in range(num_classes):
+        precision[j], recall[j], _ = precision_recall_curve(y_test_bin[:, j], y_score[:, j])
+        average_precision[j] = average_precision_score(y_test_bin[:, j], y_score[:, j])
+    precision["micro"], recall["micro"], _ = precision_recall_curve(y_test_bin.ravel(), y_score.ravel())
+    average_precision["micro"] = average_precision_score(y_test_bin, y_score, average="micro")
+    
+    ax = axes_pr[i]
+    ax.plot(recall["micro"], precision["micro"],
+            label='Micro-average PR (AP = {0:0.2f})'.format(average_precision["micro"]),
+            color='gold', linestyle=':', linewidth=4)
+    colors = ['aqua', 'darkorange', 'cornflowerblue', 'green', 'red', 'purple']
+    for j in range(num_classes):
+        ax.plot(recall[j], precision[j], color=colors[j % len(colors)], lw=2,
+                label='PR (class {0}) (AP = {1:0.2f})'.format(label_encoder.classes_[j], average_precision[j]))
+    ax.set_xlabel('Recall', fontsize=12)
+    ax.set_ylabel('Precision', fontsize=12)
+    ax.set_title(f'Precision-Recall Curve - {name}', fontsize=14)
+    ax.legend(loc="lower left", fontsize=10, ncol=2)
+
+plt.tight_layout()
+plt.subplots_adjust(bottom=0.08, top=0.95, hspace=0.3)
 plt.show()
